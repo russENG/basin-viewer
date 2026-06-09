@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>流域データ確認ビューア</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<script src="config.js"></script>
+<style>
+  html,body{margin:0;height:100%;font-family:sans-serif}
+  #map{position:absolute;top:0;bottom:0;left:0;right:0}
+  #panel{position:absolute;top:10px;right:10px;z-index:1;background:rgba(255,255,255,.95);
+    padding:10px 12px;border:1px solid #888;border-radius:6px;font-size:13px;max-width:300px}
+  #panel h4{margin:8px 0 4px;font-size:12px;color:#444}
+  #panel h4:first-child{margin-top:0}
+  #panel label{display:block;margin:3px 0;cursor:pointer}
+  .sw{display:inline-block;width:12px;height:12px;vertical-align:middle;margin-right:5px;border:1px solid #666}
+  #status{position:absolute;top:10px;left:10px;z-index:2;background:#ffe6e6;border:1px solid #c00;
+    padding:6px 9px;font-size:12px;max-width:560px;display:none;white-space:pre-wrap}
+  #note{position:absolute;bottom:8px;left:8px;z-index:1;background:rgba(255,255,255,.92);
+    padding:6px 9px;border:1px solid #888;border-radius:5px;font-size:11px;line-height:1.5;max-width:430px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="status"></div>
+<div id="panel">
+  <h4>背景地図</h4>
+  <label><input type="radio" name="bm" value="geolonia" checked> Geolonia</label>
+  <label><input type="radio" name="bm" value="gsi_pale"> 地理院 淡色</label>
+  <label><input type="radio" name="bm" value="gsi_std"> 地理院 標準</label>
+  <label><input type="radio" name="bm" value="gsi_photo"> 地理院 写真</label>
+  <label><input type="radio" name="bm" value="osm"> OpenStreetMap</label>
+  <h4>表示レイヤ</h4>
+  <label><input type="checkbox" id="c_water" checked><span class="sw" style="background:#ff7f0e;border-radius:50%"></span>水位観測所（国・水資源機構）</label>
+  <label><input type="checkbox" id="c_rain"><span class="sw" style="background:#2ca02c;border-radius:50%"></span>雨量観測所</label>
+  <label><input type="checkbox" id="c_dam" checked><span class="sw" style="background:#d62728"></span>ダム（全2,749・発電含む, 台形/色=管理者）</label>
+  <label><input type="checkbox" id="c_river"><span class="sw" style="background:#08519c"></span>河川（色=河道次数）</label>
+  <label><input type="checkbox" id="c_suikei"><span class="sw" style="background:#8c564b"></span>水系域（公的）</label>
+  <label><input type="checkbox" id="c_units"><span class="sw" style="background:#e6550d"></span>単位流域（公的・W12）</label>
+  <label><input type="checkbox" id="c_bg"><span class="sw" style="background:#2c7fb8"></span>上流に構造物のない水位観測所の流域</label>
+  <label><input type="checkbox" id="c_bd"><span class="sw" style="background:#d62728"></span>ダムの集水域（上流に他ダムなし）</label>
+</div>
+<div id="note">
+  ※構造物=操作を伴うダム・可動堰等（固定堰除く）／※河道次数=J-FlwDir集水面積(upa)由来の面積階級（厳密Strahlerではない）<br>
+  出典: 背景=Geolonia/地理院/OSM, 観測所=川の防災情報/水文水質DB, ダム=ダム諸量DB, 河道・流域界=国土数値情報W05/W12, 流域算出=J-FlwDir(東大)
+</div>
+<script>
+// ===== 設定 =====
+// 公開デプロイ時は同ディレクトリに config.js を置き window.VIEWER_CONFIG を定義する
+//   例: window.VIEWER_CONFIG = { geoloniaKey:'xxxx', publicMode:true };
+// publicMode=true のとき、非商用ライセンス（国土数値情報 W05河川/W01ダム/W12流域界）の
+// レイヤは構築せず、UIからも隠す。CC-BY系（観測所/J-FlwDir算出流域/背景地図）のみ表示する。
+const CFG=window.VIEWER_CONFIG||{};
+const _qs=new URLSearchParams(location.search);
+// Geolonia APIキー: config.js > ?key= > 既定プレースホルダ（未設定だとGeolonia背景は出ない）
+const GEOLONIA_KEY=CFG.geoloniaKey||_qs.get('key')||'YOUR-API-KEY';
+// 公開モード: config.js > ?public=1
+const PUBLIC=(CFG.publicMode===true)||_qs.get('public')==='1';
+// 非商用レイヤ（公開モードで除外する checkbox id）。河川は公開モードでは OSM(ODbL) に差し替えるため除外しない。
+const NONCOMMERCIAL=['c_dam','c_suikei','c_units'];
+// タイル配信元: 既定は同梱の ./tiles。config.js の tileBase か ?tiles= で外部URL（Cloudflare R2 等）に向けられる。
+// 25MiB超のPMTilesは Cloudflare Pages に置けないため R2 等へ逃がす（例 tileBase:'https://pub-xxx.r2.dev'）。
+const TILE_BASE=CFG.tileBase||_qs.get('tiles')||'./tiles';
+// 河川タイル: 内部=W05(J-FlwDir河道次数), 公開=OSM waterway(ODbL)。source-layer は両者とも 'rivers'。
+const RIVER_TILES='pmtiles://'+TILE_BASE+(PUBLIC?'/rivers_osm.pmtiles':'/rivers.pmtiles');
+
+const pmp=new pmtiles.Protocol();maplibregl.addProtocol('pmtiles',pmp.tile);
+const ORDER_COLOR=['interpolate',['linear'],['get','order'],1,'#cfe8f3',3,'#6baed6',5,'#2171b5',6,'#08519c',8,'#041f4a'];
+function rasterStyle(tiles,attr){return{version:8,sources:{bm:{type:'raster',tiles:[tiles],tileSize:256,attribution:attr||''}},layers:[{id:'bm',type:'raster',source:'bm'}]};}
+const BASEMAPS={
+  geolonia:'https://cdn.geolonia.com/style/geolonia/basic/ja.json',
+  gsi_pale:rasterStyle('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png','地理院タイル'),
+  gsi_std:rasterStyle('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png','地理院タイル'),
+  gsi_photo:rasterStyle('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg','地理院タイル'),
+  osm:rasterStyle('https://a.tile.openstreetmap.org/{z}/{x}/{y}.png','© OpenStreetMap'),
+};
+const _st=document.getElementById('status');
+function showStatus(t){_st.style.display='block';_st.textContent=String(t).slice(0,500);}
+
+function damIcon(color){
+  const w=26,h=20,c=document.createElement('canvas');c.width=w;c.height=h;
+  const x=c.getContext('2d');x.fillStyle=color;x.strokeStyle='#fff';x.lineWidth=2.5;
+  x.beginPath();x.moveTo(8,3);x.lineTo(18,3);x.lineTo(23,16);x.lineTo(3,16);x.closePath();
+  x.fill();x.stroke();return x.getImageData(0,0,w,h);
+}
+const HAS_KEY=GEOLONIA_KEY && GEOLONIA_KEY!=='YOUR-API-KEY';
+const initBM=HAS_KEY?'geolonia':'gsi_pale';
+const map=new maplibregl.Map({container:'map',center:[137.5,37.5],zoom:4.4,
+  style:BASEMAPS[initBM],
+  transformRequest:(url)=>({url:url.replace('YOUR-API-KEY',GEOLONIA_KEY)})});
+map.addControl(new maplibregl.NavigationControl());
+document.querySelector(`input[name=bm][value=${initBM}]`).checked=true;
+if(!HAS_KEY)showStatus('Geolonia背景には viewer.html の GEOLONIA_KEY 設定が必要です（未設定のため地理院淡色を表示中）');
+// 未配置の任意レイヤ（geojson/タイル）取得失敗は警告表示しない（tile/abort/404/fetch/not found を無視）
+map.on('error',e=>{const m=(e&&e.error&&e.error.message)||'';if(m&&!/tile|abort|fetch|not found|404|failed to/i.test(m))showStatus('error: '+m);});
+
+// レイヤ定義: id -> {build:()=>[layerids], vis:checkbox既定}
+const cb=id=>document.getElementById(id).checked;
+function buildAll(){
+  // データソース（PMTiles=ベクタ, それ以外=geojson）
+  // 河川は両モードで構築（内部=W05 / 公開=OSM）。units(W12) は非商用のため公開モードで省略。
+  if(!map.getSource('river')) map.addSource('river',{type:'vector',url:RIVER_TILES});
+  if(!PUBLIC){
+    if(!map.getSource('units')) map.addSource('units',{type:'vector',url:'pmtiles://'+TILE_BASE+'/basins.pmtiles'});
+  }
+  // [source, file, cluster, nonCommercial]
+  for(const [s,f,cl,nc] of [['suikei','w12_suikei.geojson',0,1],['bg','basins_gauges.geojson',0,0],
+      ['bd','basins_dams.geojson',0,0],['dam','w01_dams.geojson',0,1],
+      ['rain','v_rain.geojson',1,0],['water','v_water.geojson',1,0]]){
+    if(nc&&PUBLIC) continue;
+    if(!map.getSource(s)) map.addSource(s,cl?{type:'geojson',data:f,cluster:true,clusterRadius:48}:{type:'geojson',data:f});
+  }
+  // ダムアイコン
+  try{map.addImage('dam_kk',damIcon('#1f77b4'),{});}catch(e){}
+  try{map.addImage('dam_su',damIcon('#2ca02c'),{});}catch(e){}
+  try{map.addImage('dam_to',damIcon('#8c6d31'),{});}catch(e){}
+  try{map.addImage('dam_el',damIcon('#d62728'),{});}catch(e){}
+  try{map.addImage('dam_ot',damIcon('#999999'),{});}catch(e){}
+  const V=id=>cb(id)?'visible':'none';
+  const L=(o,vid)=>{o.layout=Object.assign(o.layout||{},{visibility:V(vid)});map.addLayer(o);};
+  // 面（下）→線→点（上）の順。非商用レイヤ（units/suikei/river/dam）は公開モードで省略
+  if(!PUBLIC){
+    L({id:'units-f',type:'fill',source:'units','source-layer':'basins',paint:{'fill-color':'#fdae6b','fill-opacity':0.08}},'c_units');
+    L({id:'units-l',type:'line',source:'units','source-layer':'basins',paint:{'line-color':'#e6550d','line-width':0.5,'line-opacity':0.7}},'c_units');
+    L({id:'suikei-f',type:'fill',source:'suikei',paint:{'fill-color':'#8c564b','fill-opacity':0.05}},'c_suikei');
+    L({id:'suikei-l',type:'line',source:'suikei',paint:{'line-color':'#8c564b','line-width':0.8}},'c_suikei');
+  }
+  L({id:'bg-f',type:'fill',source:'bg',paint:{'fill-color':'#2c7fb8','fill-opacity':0.45}},'c_bg');
+  L({id:'bd-f',type:'fill',source:'bd',paint:{'fill-color':'#d62728','fill-opacity':0.5}},'c_bd');
+  L({id:'river-l',type:'line',source:'river','source-layer':'rivers',
+    paint:{'line-color':ORDER_COLOR,'line-width':['interpolate',['linear'],['get','order'],1,0.3,5,0.9,8,3.5]}},'c_river');
+  for(const [s,col,vid] of [['rain','#2ca02c','c_rain'],['water','#ff7f0e','c_water']]){
+    L({id:s+'-cl',type:'circle',source:s,filter:['has','point_count'],
+      paint:{'circle-color':col,'circle-opacity':0.55,'circle-stroke-color':'#fff','circle-stroke-width':1,
+      'circle-radius':['step',['get','point_count'],8,50,12,200,16,1000,22]}},vid);
+    L({id:s+'-pt',type:'circle',source:s,filter:['!',['has','point_count']],
+      paint:{'circle-color':col,'circle-radius':2.8,'circle-opacity':0.85}},vid);
+  }
+  if(!PUBLIC){
+    let damOk=false;
+    const DAMICON=['match',['get','mgr_cat'],'国交省','dam_kk','水資源機構','dam_su','都道府県','dam_to','電力会社','dam_el','dam_ot'];
+    const DAMCOL=['match',['get','mgr_cat'],'国交省','#1f77b4','水資源機構','#2ca02c','都道府県','#8c6d31','電力会社','#d62728','#999999'];
+    try{L({id:'dam-s',type:'symbol',source:'dam',layout:{'icon-image':DAMICON,'icon-size':0.85,'icon-allow-overlap':true}},'c_dam');damOk=true;}catch(e){}
+    if(!damOk) L({id:'dam-s',type:'circle',source:'dam',paint:{'circle-color':DAMCOL,'circle-radius':6,'circle-stroke-color':'#fff','circle-stroke-width':1.5}},'c_dam');
+  }
+}
+
+// クリック/ホバーは一度だけ登録（レイヤidで遅延発火）
+const pop=(html,e)=>new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
+map.on('click','dam-s',e=>{const p=e.features[0].properties;pop(`<b>${p.name}ダム</b><br>${p.wsys}水系 ${p.river}<br>管理:${p.mgr_cat}${p.is_power==='true'||p.is_power===true?'<br><b>発電あり</b>':''}`,e);});
+map.on('click','river-l',e=>{const p=e.features[0].properties;
+  let h='河川:'+(p.river||p.name||'(名称なし)');
+  if(p.area_km2!=null) h+=`<br>集水面積:${p.area_km2} km²`;        // W05+J-FlwDir
+  if(p.waterway) h+=`<br>種別:${p.waterway}`;                      // OSM waterway クラス
+  else if(p.order!=null) h+=`<br>河道次数:${p.order}`;             // W05 河道次数
+  pop(h,e);});
+map.on('click','units-f',e=>{const p=e.features[0].properties;pop(`水系:${p.name||p.wsys}<br>単位流域コード:${p.unit}<br>面積:${p.area_km2} km²`,e);});
+map.on('click','suikei-f',e=>{const p=e.features[0].properties;pop(`水系名:${p.name||''}<br>水系コード:${p.wsys}`,e);});
+map.on('click','bg-f',e=>{const p=e.features[0].properties;pop(`${p.name||''}<br>集水面積:${p.area_km2}km² / 雨量計:${p.n_rain_in}`,e);});
+map.on('click','bd-f',e=>{const p=e.features[0].properties;pop(`${p.name||''}<br>集水面積:${p.area_km2}km²`,e);});
+for(const l of ['dam-s','river-l','units-f','suikei-f','bg-f','bd-f']){
+  map.on('mouseenter',l,()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave',l,()=>map.getCanvas().style.cursor='');
+}
+
+// スタイル読込ごとにデータ層を（再）構築
+map.on('style.load',()=>{try{buildAll();}catch(err){showStatus('build error: '+err.message);}});
+
+// チェックボックス＝可視切替
+const groups={c_water:['water-cl','water-pt'],c_rain:['rain-cl','rain-pt'],c_dam:['dam-s'],
+  c_river:['river-l'],c_suikei:['suikei-f','suikei-l'],c_units:['units-f','units-l'],c_bg:['bg-f'],c_bd:['bd-f']};
+for(const id in groups)document.getElementById(id).addEventListener('change',e=>{
+  const v=e.target.checked?'visible':'none';
+  groups[id].forEach(l=>{if(map.getLayer(l))map.setLayoutProperty(l,'visibility',v);});
+});
+// 背景地図切替（setStyle→style.loadでbuildAll再実行）
+for(const r of document.querySelectorAll('input[name=bm]'))
+  r.addEventListener('change',e=>{if(e.target.checked)map.setStyle(BASEMAPS[e.target.value]);});
+
+// 公開モード: 非商用レイヤ（国土数値情報 W01/W12）の UI を隠し、河川ラベルを OSM 表記に直し、出典を差し替える
+if(PUBLIC){
+  for(const id of NONCOMMERCIAL){const el=document.getElementById(id);if(el&&el.parentElement)el.parentElement.style.display='none';}
+  const rl=document.getElementById('c_river');
+  if(rl){rl.checked=true;  // 公開版の主役レイヤなので既定ON
+    if(rl.parentElement)rl.parentElement.lastChild.textContent='河川（OSM・色=種別）';}
+  const note=document.getElementById('note');
+  if(note)note.innerHTML='出典: 背景=Geolonia/地理院/OSM, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
+}
+</script>
+</body>
+</html>
