@@ -95,7 +95,8 @@ map.addControl(new maplibregl.NavigationControl());
 document.querySelector(`input[name=bm][value=${initBM}]`).checked=true;
 if(!HAS_KEY)showStatus('Geolonia背景には viewer.html の GEOLONIA_KEY 設定が必要です（未設定のため地理院淡色を表示中）');
 // 未配置の任意レイヤ（geojson/タイル）取得失敗は警告表示しない（tile/abort/404/fetch/not found を無視）
-map.on('error',e=>{const m=(e&&e.error&&e.error.message)||'';if(m&&!/tile|abort|fetch|not found|404|failed to/i.test(m))showStatus('error: '+m);});
+// dem/dimension mismatch は Geolonia スタイルの陰影起伏(hillshade)由来で表示には実害なし→警告抑止
+map.on('error',e=>{const m=(e&&e.error&&e.error.message)||'';if(m&&!/tile|abort|fetch|not found|404|failed to|dem|dimension|mismatch/i.test(m))showStatus('error: '+m);});
 
 // レイヤ定義: id -> {build:()=>[layerids], vis:checkbox既定}
 const cb=id=>document.getElementById(id).checked;
@@ -176,9 +177,10 @@ for(const id in groups)document.getElementById(id).addEventListener('change',e=>
   const v=e.target.checked?'visible':'none';
   groups[id].forEach(l=>{if(map.getLayer(l))map.setLayoutProperty(l,'visibility',v);});
 });
-// 背景地図切替（setStyle→style.loadでbuildAll再実行）
+// 背景地図切替。diff:false でフルリロードを強制し style.load を必ず発火させる
+// （diff既定だとオーバーレイ層が差分で消えても style.load が出ず buildAll が再実行されない）。
 for(const r of document.querySelectorAll('input[name=bm]'))
-  r.addEventListener('change',e=>{if(e.target.checked)map.setStyle(BASEMAPS[e.target.value]);});
+  r.addEventListener('change',e=>{if(e.target.checked)map.setStyle(BASEMAPS[e.target.value],{diff:false});});
 
 // 公開モード: 非商用レイヤ（国土数値情報 W01/W12）の UI を隠し、河川ラベルを OSM 表記に直し、出典を差し替える
 if(PUBLIC){
