@@ -149,37 +149,37 @@ function buildAll(){
   }
 }
 
-// クリック/ホバーは一度だけ登録（レイヤidで遅延発火）
-const pop=(html,e)=>new maplibregl.Popup().setLngLat(e.lngLat).setHTML(html).addTo(map);
-map.on('click','dam-s',e=>{const p=e.features[0].properties;pop(`<b>${p.name}ダム</b><br>${p.wsys}水系 ${p.river}<br>管理:${p.mgr_cat}${p.is_power==='true'||p.is_power===true?'<br><b>発電あり</b>':''}`,e);});
-map.on('click','river-l',e=>{const p=e.features[0].properties;
-  let h='河川:'+(p.river||p.name||'(名称なし)');
-  if(p.area_km2!=null) h+=`<br>集水面積:${p.area_km2} km²`;        // W05+J-FlwDir
-  if(p.waterway) h+=`<br>種別:${p.waterway}`;                      // OSM waterway クラス
-  else if(p.order!=null) h+=`<br>河道次数:${p.order}`;             // W05 河道次数
-  pop(h,e);});
-map.on('click','units-f',e=>{const p=e.features[0].properties;pop(`水系:${p.name||p.wsys}<br>単位流域コード:${p.unit}<br>面積:${p.area_km2} km²`,e);});
-map.on('click','suikei-f',e=>{const p=e.features[0].properties;pop(`水系名:${p.name||''}<br>水系コード:${p.wsys}`,e);});
-map.on('click','bg-f',e=>{const p=e.features[0].properties;pop(`${p.name||''}<br>集水面積:${p.area_km2}km² / 雨量計:${p.n_rain_in}`,e);});
-map.on('click','bd-f',e=>{const p=e.features[0].properties;pop(`${p.name||''}<br>集水面積:${p.area_km2}km²`,e);});
-// 観測所の点（クラスタ展開後の個別点）
-map.on('click','water-pt',e=>{const p=e.features[0].properties;
-  let h=`<b>水位観測所</b><br>${p.name||''}`;
-  if(p.river_system) h+=`<br>${p.river_system}${p.river?' '+p.river:''}`;
-  pop(h,e);});
-map.on('click','rain-pt',e=>{const p=e.features[0].properties;pop(`<b>雨量観測所</b><br>${p.name||''}`,e);});
-// 観測所クラスタ：クリックで展開ズーム
-function clusterZoom(src,layer){
-  map.on('click',layer,e=>{
-    const f=map.queryRenderedFeatures(e.point,{layers:[layer]})[0]; if(!f)return;
-    const s=map.getSource(src); if(!s||!s.getClusterExpansionZoom)return;
-    s.getClusterExpansionZoom(f.properties.cluster_id)
-      .then(z=>map.easeTo({center:f.geometry.coordinates,zoom:z})).catch(()=>{});
-  });
+// クリック：重なり時は 点>線>面 の優先で1つだけポップアップ
+// （観測所が河川上にある等で複数ハンドラが発火し河川が優先されるのを防ぐ）
+const PRIORITY=['dam-s','water-pt','rain-pt','river-l','bg-f','bd-f','suikei-f','units-f'];
+const CLUSTERS={'water-cl':'water','rain-cl':'rain'};
+function popupHTML(id,p){
+  if(id==='dam-s') return `<b>${p.name}ダム</b><br>${p.wsys}水系 ${p.river}<br>管理:${p.mgr_cat}${p.is_power==='true'||p.is_power===true?'<br><b>発電あり</b>':''}`;
+  if(id==='water-pt'){let h=`<b>水位観測所</b><br>${p.name||''}`; if(p.river_system)h+=`<br>${p.river_system}${p.river?' '+p.river:''}`; return h;}
+  if(id==='rain-pt') return `<b>雨量観測所</b><br>${p.name||''}`;
+  if(id==='river-l'){let h='河川:'+(p.river||p.name||'(名称なし)'); if(p.area_km2!=null)h+=`<br>集水面積:${p.area_km2} km²`; if(p.waterway)h+=`<br>種別:${p.waterway}`; else if(p.order!=null)h+=`<br>河道次数:${p.order}`; return h;}
+  if(id==='bg-f') return `${p.name||''}<br>集水面積:${p.area_km2}km² / 雨量計:${p.n_rain_in}`;
+  if(id==='bd-f') return `${p.name||''}<br>集水面積:${p.area_km2}km²`;
+  if(id==='suikei-f') return `水系名:${p.name||''}<br>水系コード:${p.wsys}`;
+  if(id==='units-f') return `水系:${p.name||p.wsys}<br>単位流域コード:${p.unit}<br>面積:${p.area_km2} km²`;
+  return '';
 }
-clusterZoom('water','water-cl'); clusterZoom('rain','rain-cl');
-for(const l of ['dam-s','river-l','units-f','suikei-f','bg-f','bd-f',
-    'water-pt','rain-pt','water-cl','rain-cl']){
+map.on('click',e=>{
+  const b=[[e.point.x-5,e.point.y-5],[e.point.x+5,e.point.y+5]];  // ±5px の許容
+  for(const cid in CLUSTERS){ if(!map.getLayer(cid))continue;
+    const cf=map.queryRenderedFeatures(b,{layers:[cid]});
+    if(cf.length){const s=map.getSource(CLUSTERS[cid]);
+      if(s&&s.getClusterExpansionZoom) s.getClusterExpansionZoom(cf[0].properties.cluster_id)
+        .then(z=>map.easeTo({center:cf[0].geometry.coordinates,zoom:z})).catch(()=>{});
+      return;}
+  }
+  const present=PRIORITY.filter(l=>map.getLayer(l));
+  if(!present.length)return;
+  const feats=map.queryRenderedFeatures(b,{layers:present});
+  for(const id of PRIORITY){const f=feats.find(x=>x.layer.id===id);
+    if(f){new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHTML(id,f.properties)).addTo(map);return;}}
+});
+for(const l of ['dam-s','river-l','units-f','suikei-f','bg-f','bd-f','water-pt','rain-pt','water-cl','rain-cl']){
   map.on('mouseenter',l,()=>map.getCanvas().style.cursor='pointer');
   map.on('mouseleave',l,()=>map.getCanvas().style.cursor='');
 }
