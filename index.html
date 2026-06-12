@@ -60,7 +60,7 @@ const GEOLONIA_KEY=CFG.geoloniaKey||_qs.get('key')||'YOUR-API-KEY';
 // 公開モード: config.js > ?public=1
 const PUBLIC=(CFG.publicMode===true)||_qs.get('public')==='1';
 // 非商用レイヤ（公開モードで除外する checkbox id）。河川は公開モードでは OSM(ODbL) に差し替えるため除外しない。
-const NONCOMMERCIAL=['c_dam','c_suikei','c_units'];
+const NONCOMMERCIAL=['c_suikei','c_units'];
 // タイル配信元: 既定は同梱の ./tiles。config.js の tileBase か ?tiles= で外部URL（Cloudflare R2 等）に向けられる。
 // 25MiB超のPMTilesは Cloudflare Pages に置けないため R2 等へ逃がす（例 tileBase:'https://pub-xxx.r2.dev'）。
 const TILE_BASE=CFG.tileBase||_qs.get('tiles')||'./tiles';
@@ -107,9 +107,11 @@ function buildAll(){
   if(!PUBLIC){
     if(!map.getSource('units')) map.addSource('units',{type:'vector',url:'pmtiles://'+TILE_BASE+'/basins.pmtiles'});
   }
+  // ダムは公開=mudam(ダム諸量DB・政府標準利用規約2.0/CC-BY互換)、内部=W01(非商用・全2,749)
+  const DAM_FILE=PUBLIC?'v_dams.geojson':'w01_dams.geojson';
   // [source, file, cluster, nonCommercial]
   for(const [s,f,cl,nc] of [['suikei','w12_suikei.geojson',0,1],['bg','basins_gauges.geojson',0,0],
-      ['bd','basins_dams.geojson',0,0],['dam','w01_dams.geojson',0,1],
+      ['bd','basins_dams.geojson',0,0],['dam',DAM_FILE,0,0],
       ['rain','v_rain.geojson',1,0],['water','v_water.geojson',1,0]]){
     if(nc&&PUBLIC) continue;
     if(!map.getSource(s)) map.addSource(s,cl?{type:'geojson',data:f,cluster:true,clusterRadius:48}:{type:'geojson',data:f});
@@ -141,10 +143,14 @@ function buildAll(){
       paint:{'circle-color':col,'circle-opacity':0.9,'circle-stroke-color':'#fff','circle-stroke-width':1.2,
         'circle-radius':['interpolate',['linear'],['zoom'],4,3.5,8,5,12,7,16,9]}},vid);
   }
-  if(!PUBLIC){
+  {
     let damOk=false;
-    const DAMICON=['match',['get','mgr_cat'],'国交省','dam_kk','水資源機構','dam_su','都道府県','dam_to','電力会社','dam_el','dam_ot'];
-    const DAMCOL=['match',['get','mgr_cat'],'国交省','#1f77b4','水資源機構','#2ca02c','都道府県','#8c6d31','電力会社','#d62728','#999999'];
+    // 公開=mudam(manager_class) / 内部=W01(mgr_cat)。台形アイコンを管理者で色分け。
+    const MF=PUBLIC?['get','manager_class']:['get','mgr_cat'];
+    const DAMICON=['match',MF,'国交省','dam_kk','国土交通省直轄','dam_kk','北海道開発局','dam_kk',
+      '水資源機構','dam_su','都道府県','dam_to','電力会社','dam_el','dam_ot'];
+    const DAMCOL=['match',MF,'国交省','#1f77b4','国土交通省直轄','#1f77b4','北海道開発局','#1f77b4',
+      '水資源機構','#2ca02c','都道府県','#8c6d31','電力会社','#d62728','#999999'];
     try{L({id:'dam-s',type:'symbol',source:'dam',layout:{'icon-image':DAMICON,'icon-size':0.85,'icon-allow-overlap':true}},'c_dam');damOk=true;}catch(e){}
     if(!damOk) L({id:'dam-s',type:'circle',source:'dam',paint:{'circle-color':DAMCOL,'circle-radius':6,'circle-stroke-color':'#fff','circle-stroke-width':1.5}},'c_dam');
   }
@@ -155,7 +161,11 @@ function buildAll(){
 const PRIORITY=['dam-s','water-pt','rain-pt','river-l','bg-f','bd-f','suikei-f','units-f'];
 const CLUSTERS={'water-cl':'water','rain-cl':'rain'};
 function popupHTML(id,p){
-  if(id==='dam-s') return `<b>${p.name}ダム</b><br>${p.wsys}水系 ${p.river}<br>管理:${p.mgr_cat}${p.is_power==='true'||p.is_power===true?'<br><b>発電あり</b>':''}`;
+  if(id==='dam-s'){const nm=p.dam_name||p.name||'';const sys=p.water_system||p.wsys||'';const mgr=p.manager_class||p.mgr_cat||'';
+    let h=`<b>${nm}ダム</b><br>${sys}水系 ${p.river||''}<br>管理:${mgr}`;
+    if(p.hourly_in_riverdb==='True'||p.hourly_in_riverdb===true)h+='<br>時間流入量あり';
+    else if(p.is_power==='true'||p.is_power===true)h+='<br><b>発電あり</b>';
+    return h;}
   if(id==='water-pt'){let h=`<b>水位観測所</b><br>${p.name||''}`; if(p.river_system)h+=`<br>${p.river_system}${p.river?' '+p.river:''}`; return h;}
   if(id==='rain-pt') return `<b>雨量観測所</b><br>${p.name||''}`;
   if(id==='river-l'){let h='河川:'+(p.river||p.name||'(名称なし)'); if(p.area_km2!=null)h+=`<br>集水面積:${p.area_km2} km²`; if(p.waterway)h+=`<br>種別:${p.waterway}`; else if(p.order!=null)h+=`<br>河道次数:${p.order}`; return h;}
@@ -206,8 +216,10 @@ if(PUBLIC){
   const rl=document.getElementById('c_river');
   if(rl){rl.checked=true;  // 公開版の主役レイヤなので既定ON
     if(rl.parentElement)rl.parentElement.lastChild.textContent='河川（OSM・色=種別）';}
+  const dl=document.getElementById('c_dam');  // 公開版は mudam(ダム諸量DB)
+  if(dl&&dl.parentElement)dl.parentElement.lastChild.textContent='ダム（ダム諸量DB・台形/色=管理者）';
   const note=document.getElementById('note');
-  if(note)note.innerHTML='出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
+  if(note)note.innerHTML='出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), ダム=ダム諸量データベース（国土交通省 国土技術政策総合研究所, 政府標準利用規約2.0）, 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
 }
 </script>
 </body>
