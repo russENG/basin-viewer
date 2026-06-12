@@ -28,10 +28,10 @@
 <div id="status"></div>
 <div id="panel">
   <h4>背景地図</h4>
-  <label><input type="radio" name="bm" value="geolonia" checked> Geolonia</label>
-  <label><input type="radio" name="bm" value="gsi_pale"> 地理院 淡色</label>
-  <label><input type="radio" name="bm" value="gsi_std"> 地理院 標準</label>
-  <label><input type="radio" name="bm" value="gsi_photo"> 地理院 写真</label>
+  <label><input type="radio" name="bm" value="geolonia" checked> Geolonia Maps</label>
+  <label><input type="radio" name="bm" value="gsi_pale"> 地理院地図 淡色</label>
+  <label><input type="radio" name="bm" value="gsi_std"> 地理院地図 標準</label>
+  <label><input type="radio" name="bm" value="gsi_photo"> 地理院地図 写真</label>
   <label><input type="radio" name="bm" value="osm"> OpenStreetMap</label>
   <h4>表示レイヤ</h4>
   <label><input type="checkbox" id="c_water" checked><span class="sw" style="background:#ff7f0e;border-radius:50%"></span>水位観測所（国・水資源機構）</label>
@@ -45,7 +45,7 @@
 </div>
 <div id="note">
   ※構造物=操作を伴うダム・可動堰等（固定堰除く）／※河道次数=J-FlwDir集水面積(upa)由来の面積階級（厳密Strahlerではない）<br>
-  出典: 背景=Geolonia/地理院/OSM, 観測所=川の防災情報/水文水質DB, ダム=ダム諸量DB, 河道・流域界=国土数値情報W05/W12, 流域算出=J-FlwDir(東大)
+  出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=川の防災情報・国土交通省 水文水質データベース, ダム=ダム諸量DB・国土数値情報W01, 河道・流域界=国土数値情報W05/W12, 流域算出=J-FlwDir(東京大学)
 </div>
 <script>
 // ===== 設定 =====
@@ -189,7 +189,7 @@ if(PUBLIC){
   if(rl){rl.checked=true;  // 公開版の主役レイヤなので既定ON
     if(rl.parentElement)rl.parentElement.lastChild.textContent='河川（OSM・色=種別）';}
   const note=document.getElementById('note');
-  if(note)note.innerHTML='出典: 背景=Geolonia/地理院/OSM, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
+  if(note)note.innerHTML='出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
 }
 </script>
 </body>
