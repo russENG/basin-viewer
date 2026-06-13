@@ -156,8 +156,8 @@ function buildAll(){
   }
 }
 
-// クリック：重なり時は 点>線>面 の優先で1つだけポップアップ
-// （観測所が河川上にある等で複数ハンドラが発火し河川が優先されるのを防ぐ）
+// クリック：点・線（観測所/ダム/河川）は最優先で1つだけ。面（流域）は重なる全てを面積順に列挙。
+// （観測所が河川上にある等で河川が優先されるのを防ぎつつ、入れ子流域は全件見えるようにする）
 const PRIORITY=['dam-s','water-pt','rain-pt','river-l','bg-f','bd-f','suikei-f','units-f'];
 const CLUSTERS={'water-cl':'water','rain-cl':'rain'};
 function popupHTML(id,p){
@@ -187,8 +187,23 @@ map.on('click',e=>{
   const present=PRIORITY.filter(l=>map.getLayer(l));
   if(!present.length)return;
   const feats=map.queryRenderedFeatures(b,{layers:present});
-  for(const id of PRIORITY){const f=feats.find(x=>x.layer.id===id);
-    if(f){new maplibregl.Popup().setLngLat(e.lngLat).setHTML(popupHTML(id,f.properties)).addTo(map);return;}}
+  const show=html=>new maplibregl.Popup({maxWidth:'320px'}).setLngLat(e.lngLat).setHTML(html).addTo(map);
+  // 点・線は最優先で1つだけ（観測所/ダム/河川）
+  for(const id of ['dam-s','water-pt','rain-pt','river-l']){
+    const f=feats.find(x=>x.layer.id===id);
+    if(f){show(popupHTML(id,f.properties));return;}
+  }
+  // 面（流域）：重なっている全てを面積昇順（内側→外側）でまとめて表示
+  const AREA=['bg-f','bd-f','suikei-f','units-f'];
+  const seen=new Set(), areaFeats=[];
+  for(const f of feats){ if(!AREA.includes(f.layer.id))continue;
+    const k=f.layer.id+'|'+(f.properties.name||'')+'|'+(f.properties.area_km2||'')+'|'+(f.properties.unit||f.properties.wsys||'');
+    if(seen.has(k))continue; seen.add(k); areaFeats.push(f);
+  }
+  if(!areaFeats.length)return;
+  areaFeats.sort((a,b)=>(+(a.properties.area_km2||1e12))-(+(b.properties.area_km2||1e12)));
+  const html=areaFeats.map(f=>popupHTML(f.layer.id,f.properties)).join('<hr style="margin:5px 0;border:0;border-top:1px solid #ccc">');
+  show((areaFeats.length>1?`<div style="font-size:11px;color:#666;margin-bottom:3px">重なり ${areaFeats.length} 件（内側→外側）</div>`:'')+html);
 });
 for(const l of ['dam-s','river-l','units-f','suikei-f','bg-f','bd-f','water-pt','rain-pt','water-cl','rain-cl']){
   map.on('mouseenter',l,()=>map.getCanvas().style.cursor='pointer');
