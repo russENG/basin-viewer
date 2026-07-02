@@ -158,7 +158,7 @@ function popupHTML(id,p){
   if(id==='water-pt'){let h=`<b>水位流量観測所</b><br>${p.name||''}`; if(p.river_system)h+=`<br>${p.river_system}${p.river?' '+p.river:''}`; return h;}
   if(id==='rain-pt') return `<b>雨量観測所</b><br>${p.name||''}`;
   if(id==='river-l'){let h='河川:'+(p.river||p.name||'(名称なし)'); if(p.area_km2!=null)h+=`<br>集水面積:${p.area_km2} km²`; if(p.waterway)h+=`<br>種別:${p.waterway}`; else if(p.order!=null)h+=`<br>河道次数:${p.order}`; return h;}
-  if(id==='bg-f') return `${p.name||''}<br>集水面積:${p.area_km2}km² / 雨量計:${p.n_rain_in}`;
+  if(id==='bg-f') return `${p.name||''}<br>集水面積:${p.area_km2}km²<br>雨量計(水文水質DB):${p.n_rain_in}／AMeDAS:${p.n_amedas_in}`;
   if(id==='bd-f') return `${p.name||''}<br>集水面積:${p.area_km2}km²`;
   return '';
 }
