@@ -7,7 +7,8 @@
 
 - 水位・雨量観測所: 出典 国土交通省 水文水質データベース (https://www1.river.go.jp/)
   を加工して作成（PDL1.0、CC BY 4.0 互換）
-- 算出流域（観測所流域・ダム集水域）: J-FlwDir (Yamazaki et al., CC BY 4.0) を加工して作成
+- 算出流域（①水位観測所トラック 62 / ②ダム流入トラック 40、束ねて 90 流域の最終選定）:
+  J-FlwDir (Yamazaki et al., CC BY 4.0) を加工して作成
 - 河川（線）: © OpenStreetMap contributors, ODbL（waterway を加工して作成）
 - 背景地図: Geolonia / 国土地理院 / OpenStreetMap
 
