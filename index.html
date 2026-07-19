@@ -40,6 +40,7 @@
   <label><input type="checkbox" id="c_river"><span class="sw" style="background:#08519c"></span>河川ネットワーク（色=河道次数）</label>
   <label><input type="checkbox" id="c_bg"><span class="sw" style="background:#2c7fb8"></span>①水位観測所トラックの最終選定流域 62（実験投入）</label>
   <label><input type="checkbox" id="c_bd"><span class="sw" style="background:#d62728"></span>②ダム流入トラックの最終選定流域 40（実験投入）</label>
+  <label><input type="checkbox" id="c_bp"><span class="sw" style="background:#ff9900;border:2px dashed #b06600"></span>③追加候補ダム 57（母集団拡張、収集・審査中）</label>
 </div>
 <div id="note">
   ※構造物=操作を伴うダム・可動堰等（固定堰除く）／※河道次数=J-FlwDir集水面積(upa)由来の面積階級（厳密Strahlerではない）<br>
@@ -106,7 +107,8 @@ function buildAll(){
   const DAM_FILE=PUBLIC?'v_dams.geojson':'w01_dams.geojson';
   // [source, file, cluster, nonCommercial]
   for(const [s,f,cl,nc] of [['bg','basins_gauges.geojson',0,0],
-      ['bd','basins_dams.geojson',0,0],['dam',DAM_FILE,0,0],
+      ['bd','basins_dams.geojson',0,0],['bp','basins_dams_pending.geojson',0,0],
+      ['dam',DAM_FILE,0,0],
       ['rain','v_rain.geojson',1,0],['water','v_water.geojson',1,0]]){
     if(nc&&PUBLIC) continue;
     if(!map.getSource(s)) map.addSource(s,cl?{type:'geojson',data:f,cluster:true,clusterRadius:48}:{type:'geojson',data:f});
@@ -122,6 +124,8 @@ function buildAll(){
   // 面（下）→線→点（上）の順。非商用レイヤ（river/dam）は公開モードで OSM/ダム諸量DB に差し替え
   L({id:'bg-f',type:'fill',source:'bg',paint:{'fill-color':'#2c7fb8','fill-opacity':0.45}},'c_bg');
   L({id:'bd-f',type:'fill',source:'bd',paint:{'fill-color':'#d62728','fill-opacity':0.5}},'c_bd');
+  L({id:'bp-f',type:'fill',source:'bp',paint:{'fill-color':'#ff9900','fill-opacity':0.35}},'c_bp');
+  L({id:'bp-l',type:'line',source:'bp',paint:{'line-color':'#b06600','line-width':1.2,'line-dasharray':[3,2]}},'c_bp');
   L({id:'river-l',type:'line',source:'river','source-layer':'rivers',
     paint:{'line-color':ORDER_COLOR,'line-width':['interpolate',['linear'],['get','order'],1,0.3,5,0.9,8,3.5]}},'c_river');
   for(const [s,col,vid] of [['rain','#2ca02c','c_rain'],['water','#ff7f0e','c_water']]){
@@ -202,7 +206,7 @@ map.on('style.load',()=>{try{buildAll();}catch(err){showStatus('build error: '+e
 
 // チェックボックス＝可視切替
 const groups={c_water:['water-cl','water-pt'],c_rain:['rain-cl','rain-pt'],c_dam:['dam-s'],
-  c_river:['river-l'],c_bg:['bg-f'],c_bd:['bd-f']};
+  c_river:['river-l'],c_bg:['bg-f'],c_bd:['bd-f'],c_bp:['bp-f','bp-l']};
 for(const id in groups)document.getElementById(id).addEventListener('change',e=>{
   const v=e.target.checked?'visible':'none';
   groups[id].forEach(l=>{if(map.getLayer(l))map.setLayoutProperty(l,'visibility',v);});
