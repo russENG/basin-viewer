@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-07-31T22:03:14Z",
+  "generated_commit": "c5844b9",
+  "files": {
+    "basins_dams.geojson": {
+      "stage": "unknown",
+      "track": "dam",
+      "features": 41,
+      "legacy": true
+    },
+    "basins_dams_final.geojson": {
+      "stage": "final",
+      "track": "dam",
+      "features": 41
+    },
+    "basins_gauges.geojson": {
+      "stage": "unknown",
+      "track": "gauge",
+      "features": 62,
+      "legacy": true
+    },
+    "basins_gauges_final.geojson": {
+      "stage": "final",
+      "track": "gauge",
+      "features": 62
+    }
+  },
+  "notes": "stage 一覧は deploy/basin-internal/README.md の命名規則を参照"
+}

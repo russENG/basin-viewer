@@ -7,6 +7,8 @@
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet"/>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/pmtiles@3.2.0/dist/pmtiles.js"></script>
+<link href="https://unpkg.com/uplot@1.6.31/dist/uPlot.min.css" rel="stylesheet"/>
+<script src="https://unpkg.com/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
 <script src="config.js"></script>
 <style>
   html,body{margin:0;height:100%;font-family:sans-serif}
@@ -21,11 +23,32 @@
     padding:6px 9px;font-size:12px;max-width:560px;display:none;white-space:pre-wrap}
   #note{position:absolute;bottom:8px;left:8px;z-index:1;background:rgba(255,255,255,.92);
     padding:6px 9px;border:1px solid #888;border-radius:5px;font-size:11px;line-height:1.5;max-width:430px}
+  #warn{position:absolute;top:10px;left:10px;z-index:2;background:#fff6d6;border:1px solid #d99400;
+    padding:6px 9px;font-size:12px;max-width:560px;display:none;white-space:pre-wrap;color:#5a4200}
+  /* 時系列パネル（流域クリック→雨量・流量の日集計チャート） */
+  #tspanel{position:absolute;left:0;right:0;bottom:0;z-index:4;background:rgba(255,255,255,.97);
+    border-top:2px solid #555;padding:8px 14px 10px;max-height:56vh;overflow-y:auto;font-size:12px;display:none}
+  #tspanel .tshead{display:flex;gap:10px;align-items:baseline;margin-bottom:4px}
+  #tspanel .tshead b{font-size:14px}
+  #tspanel .tshead .sub{color:#555}
+  #tsclose{margin-left:auto;font-size:14px;border:1px solid #aaa;background:#f4f4f4;border-radius:3px;
+    cursor:pointer;padding:1px 10px}
+  #tsctrl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:2px 0 6px}
+  #tsctrl button{font-size:11px;padding:2px 8px;border:1px solid #aaa;border-radius:3px;background:#f5f5f5;cursor:pointer}
+  #tsctrl button:hover{background:#e8e8e8}
+  .tsaxlab{color:#555;font-size:11px;margin:3px 0 0}
+  .tsbtn{margin-top:3px;font-size:11px;padding:1px 8px;border:1px solid #2166ac;border-radius:3px;
+    background:#eaf1f8;color:#12406b;cursor:pointer}
+  .tsbtn:hover{background:#d8e6f3}
+  #tspanel .u-legend{font-size:10px !important}
+  #tspanel .u-legend .u-marker{width:8px !important;height:8px !important}
+  #tspanel .u-legend th{font-weight:normal !important}
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div id="status"></div>
+<div id="warn"></div>
 <div id="panel">
   <h4>背景地図</h4>
   <label><input type="radio" name="bm" value="geolonia" checked> Geolonia Maps</label>
@@ -35,15 +58,26 @@
   <label><input type="radio" name="bm" value="osm"> OpenStreetMap</label>
   <h4>表示レイヤ</h4>
   <label><input type="checkbox" id="c_water" checked><span class="sw" style="background:#ff7f0e;border-radius:50%"></span>水位流量観測所（国・水資源機構）</label>
-  <label><input type="checkbox" id="c_rain"><span class="sw" style="background:#2ca02c;border-radius:50%"></span>雨量観測所</label>
+  <label><input type="checkbox" id="c_rain" checked><span class="sw" style="background:#2ca02c;border-radius:50%"></span>雨量観測所</label>
   <label><input type="checkbox" id="c_dam" checked><span class="sw" style="background:#d62728"></span>ダム（国土数値情報 W01・全2,749基, 台形/色=管理者）</label>
-  <label><input type="checkbox" id="c_river"><span class="sw" style="background:#08519c"></span>河川ネットワーク（色=河道次数）</label>
-  <label><input type="checkbox" id="c_bg"><span class="sw" style="background:#2c7fb8"></span>①水位観測所トラックの最終選定流域 62（実験投入）</label>
-  <label><input type="checkbox" id="c_bd"><span class="sw" style="background:#d62728"></span>②ダム流入トラックの最終選定流域 41（実験投入）</label>
+  <label><input type="checkbox" id="c_river" checked><span class="sw" style="background:#08519c"></span>河川ネットワーク（色=河道次数）</label>
+  <label><input type="checkbox" id="c_bg" checked><span class="sw" style="background:#2c7fb8"></span>①水位観測所トラックの候補流域（上流に操作構造物なし）</label>
+  <label><input type="checkbox" id="c_bd" checked><span class="sw" style="background:#d62728"></span>②ダム流入トラックの候補流域（上流に他ダムなし）</label>
+  <label><input type="checkbox" id="c_only_final"><span class="sw" style="background:#0a7d2f"></span>①②のうち最終候補のみ表示（使える集合 118/63）</label>
+  <div style="font-size:11px;color:#555;line-height:1.4;margin-top:4px">
+    最終候補＝流量取得判定（流量の実取得）と点雨量ゲート・M2 感潮検査を通過した「使える集合」。<br>
+    非最終は薄色で描画（クリックで最終候補フラグを表示）。<br>
+    流域クリック→「雨量・流量の時系列」ボタンで、収集済み時系列の日集計チャートを表示（最終候補のみ収録）。
+  </div>
 </div>
 <div id="note">
   ※構造物=操作を伴うダム・可動堰等（固定堰除く）／※河道次数=J-FlwDir集水面積(upa)由来の面積階級（厳密Strahlerではない）<br>
-  出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=川の防災情報・国土交通省 水文水質データベース, ダム=ダム諸量DB・国土数値情報W01, 河道=国土数値情報W05, 流域算出=J-FlwDir(東京大学)
+  出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=川の防災情報・国土交通省 水文水質データベース, ダム=ダム諸量DB・国土数値情報W01, 河道=国土数値情報W05, 流域算出=J-FlwDir(東京大学), 時系列=水文水質データベース・AMeDAS（気象庁）
+</div>
+<div id="tspanel">
+  <div class="tshead"><b id="tstitle"></b><span class="sub" id="tssub"></span><button id="tsclose">閉じる ×</button></div>
+  <div id="tsctrl"></div>
+  <div id="tscharts"></div>
 </div>
 <script>
 // ===== 設定 =====
@@ -77,6 +111,59 @@ const BASEMAPS={
 };
 const _st=document.getElementById('status');
 function showStatus(t){_st.style.display='block';_st.textContent=String(t).slice(0,500);}
+const _warn=document.getElementById('warn');
+const _warnSeen=new Set();
+// R2 manifest.json や実データとの乖離を警告表示（同一メッセージは重複追記しない）。
+function showWarn(t){
+  const line=String(t).slice(0,300);
+  if(_warnSeen.has(line)) return;
+  _warnSeen.add(line);
+  _warn.style.display='block';
+  _warn.textContent = _warn.textContent ? (_warn.textContent+'\n'+line) : line;
+}
+
+// manifest.json は buildAll() が背景切替で複数回発火するため、1度だけ fetch してキャッシュする。
+let _manifestPromise=null;
+function loadManifest(){
+  if(!_manifestPromise){
+    _manifestPromise = fetch('manifest.json')
+      .then(r=>r.ok ? r.json() : null)
+      .catch(()=>null);
+  }
+  return _manifestPromise;
+}
+
+// track ('gauge' or 'dam') に対応する basins_*.geojson を manifest から選ぶ:
+//   main  = 最も広い段階（pre>gate>tidal>final の順に最上位）。無ければ最終候補と同じ。
+//   final = stage='final' の集合。
+// manifest が取れない/空なら旧命名 basins_gauges.geojson + final_gauges.geojson にフォールバック。
+const STAGE_RANK={pre:4,gate:3,tidal:2,final:1};
+function pickBasinFiles(manifest, track){
+  const trackKey = track==='gauge' ? 'gauge' : 'dam';
+  let main=null, mainStage=null, mainFeatures=-1;
+  let final=null, finalFeatures=-1;
+  if(manifest && manifest.files){
+    for(const [name,ent] of Object.entries(manifest.files)){
+      if(ent.track!==trackKey) continue;
+      const stage=ent.stage;
+      if(stage==='final'){
+        if(finalFeatures<0 || (ent.features||0)>finalFeatures){ final=name; finalFeatures=ent.features; }
+      }else if(STAGE_RANK[stage]){
+        const rank=STAGE_RANK[stage];
+        const cur=mainStage?STAGE_RANK[mainStage]:0;
+        if(rank>cur){ main=name; mainStage=stage; mainFeatures=ent.features; }
+      }
+    }
+  }
+  if(!main){ main=final; mainStage='final'; mainFeatures=finalFeatures; }  // 最終候補しか R2 に無い
+  if(!main){
+    // manifest 取得失敗 → 旧命名フォールバック
+    main = trackKey==='gauge' ? 'basins_gauges.geojson' : 'basins_dams.geojson';
+    final = trackKey==='gauge' ? 'final_gauges.geojson' : 'final_dams.geojson';
+    mainStage='(unknown)';
+  }
+  return { main, mainStage, mainFeatures, final, finalFeatures };
+}
 
 function damIcon(color){
   const w=26,h=20,c=document.createElement('canvas');c.width=w;c.height=h;
@@ -104,13 +191,64 @@ function buildAll(){
   if(!map.getSource('river')) map.addSource('river',{type:'vector',url:RIVER_TILES});
   // ダムは公開=mudam(ダム諸量DB・政府標準利用規約2.0/CC-BY互換)、内部=W01(非商用・全2,749)
   const DAM_FILE=PUBLIC?'v_dams.geojson':'w01_dams.geojson';
-  // [source, file, cluster, nonCommercial]
-  for(const [s,f,cl,nc] of [['bg','basins_gauges.geojson',0,0],
-      ['bd','basins_dams.geojson',0,0],['dam',DAM_FILE,0,0],
+  // basins（gauge/dam）は「最終候補（使える集合）」の id セットを final_*.geojson から作り、
+  // 全候補（basins_*.geojson）の各 feature に is_final を注入する。
+  // 空の FeatureCollection で先に addSource → 非同期 fetch 完了で setData する（レイヤ追加を先行できる）。
+  const EMPTY={type:'FeatureCollection',features:[]};
+  for(const s of ['bg','bd']){ if(!map.getSource(s)) map.addSource(s,{type:'geojson',data:EMPTY}); }
+  // [source, file, cluster, nonCommercial]（basins は上で addSource 済みのためスキップ）
+  for(const [s,f,cl,nc] of [['dam',DAM_FILE,0,0],
       ['rain','v_rain.geojson',1,0],['water','v_water.geojson',1,0]]){
     if(nc&&PUBLIC) continue;
     if(!map.getSource(s)) map.addSource(s,cl?{type:'geojson',data:f,cluster:true,clusterRadius:48}:{type:'geojson',data:f});
   }
+  // 非同期で final_ids セットを作り、basins に is_final を注入して setData。
+  // manifest.json から stage 別ファイル名を決定し、実 features 数と manifest 記載の乖離を警告する。
+  // final_*.geojson が無い/取れない場合は is_final=false 相当（すべて非最終色）にフォールバック。
+  const injectFinal=(sourceId,info)=>{
+    const {main:mainFile, final:finalFile, mainStage, mainFeatures, finalFeatures} = info;
+    Promise.all([
+      fetch(mainFile).then(r=>r.ok?r.json():Promise.reject(new Error(mainFile+' '+r.status))),
+      finalFile ? fetch(finalFile).then(r=>r.ok?r.json():{type:'FeatureCollection',features:[]}).catch(()=>({type:'FeatureCollection',features:[]}))
+                : Promise.resolve({type:'FeatureCollection',features:[]})
+    ]).then(([main,final])=>{
+      // features 数の乖離チェック（manifest 記載 vs 実データ）
+      const mn=(main.features||[]).length;
+      if(mainFeatures>=0 && mn!==mainFeatures){
+        showWarn(`${sourceId}: manifest 記載 ${mainFile} features=${mainFeatures} / 実データ=${mn} 乖離`);
+      }
+      const fn=(final.features||[]).length;
+      if(finalFeatures>=0 && fn!==finalFeatures){
+        showWarn(`${sourceId}: manifest 記載 ${finalFile} features=${finalFeatures} / 実データ=${fn} 乖離`);
+      }
+      const finalIds=new Set((final.features||[]).map(f=>String(f.properties&&f.properties.id)));
+      (main.features||[]).forEach(f=>{
+        const pid=String(f.properties&&f.properties.id);
+        f.properties.is_final=finalIds.has(pid);
+      });
+      const src=map.getSource(sourceId);
+      if(src) src.setData(main);
+    }).catch(err=>showStatus(sourceId+' load error: '+err.message));
+  };
+  loadManifest().then(manifest=>{
+    if(!manifest){
+      showWarn('manifest.json が取得できません。旧命名 basins_gauges/basins_dams + final_* にフォールバックします（stage 検証は無効）。');
+    }else if(!manifest.files || !Object.keys(manifest.files).length){
+      showWarn('manifest.json 空。R2 の basin geojson がまだ配置されていません。');
+    }
+    const gInfo=pickBasinFiles(manifest,'gauge');
+    const dInfo=pickBasinFiles(manifest,'dam');
+    // 事前段階（pre/gate/tidal）が R2 に無ければ、地図の①②は「使える集合」のみを描く点を明示。
+    // 公開版は設計上「使える集合」1本のみの運用（build_viewer_bundle.py 参照）なので警告しない。
+    if(!PUBLIC&&gInfo.main===gInfo.final){
+      showWarn(`gauge: R2 に事前フィルタ段階(_pre/_gate/_tidal)が無く、①には「使える集合(${gInfo.finalFeatures||'?'})」のみを描画します。「最終候補外」薄色は表示されません。`);
+    }
+    if(!PUBLIC&&dInfo.main===dInfo.final){
+      showWarn(`dam: R2 に事前フィルタ段階(_pre/_gate)が無く、②には「使える集合(${dInfo.finalFeatures||'?'})」のみを描画します。「最終候補外」薄色は表示されません。`);
+    }
+    injectFinal('bg',gInfo);
+    injectFinal('bd',dInfo);
+  });
   // ダムアイコン
   try{map.addImage('dam_kk',damIcon('#1f77b4'),{});}catch(e){}
   try{map.addImage('dam_su',damIcon('#2ca02c'),{});}catch(e){}
@@ -120,8 +258,17 @@ function buildAll(){
   const V=id=>cb(id)?'visible':'none';
   const L=(o,vid)=>{o.layout=Object.assign(o.layout||{},{visibility:V(vid)});map.addLayer(o);};
   // 面（下）→線→点（上）の順。非商用レイヤ（river/dam）は公開モードで OSM/ダム諸量DB に差し替え
-  L({id:'bg-f',type:'fill',source:'bg',paint:{'fill-color':'#2c7fb8','fill-opacity':0.45}},'c_bg');
-  L({id:'bd-f',type:'fill',source:'bd',paint:{'fill-color':'#d62728','fill-opacity':0.5}},'c_bd');
+  // 最終候補=濃色、非最終=薄色。is_final が付いていない（未注入 or 判定不能）は非最終扱い。
+  const BG_COLOR=['case',['==',['get','is_final'],true],'#08519c','#a6c3d9'];
+  const BD_COLOR=['case',['==',['get','is_final'],true],'#8b1a1c','#eaa5a5'];
+  L({id:'bg-f',type:'fill',source:'bg',paint:{'fill-color':BG_COLOR,'fill-opacity':0.55}},'c_bg');
+  L({id:'bd-f',type:'fill',source:'bd',paint:{'fill-color':BD_COLOR,'fill-opacity':0.6}},'c_bd');
+  // 「最終候補のみ表示」チェックの初期状態を反映
+  const onlyFinal=cb('c_only_final');
+  if(onlyFinal){
+    map.setFilter('bg-f',['==',['get','is_final'],true]);
+    map.setFilter('bd-f',['==',['get','is_final'],true]);
+  }
   L({id:'river-l',type:'line',source:'river','source-layer':'rivers',
     paint:{'line-color':ORDER_COLOR,'line-width':['interpolate',['linear'],['get','order'],1,0.3,5,0.9,8,3.5]}},'c_river');
   for(const [s,col,vid] of [['rain','#2ca02c','c_rain'],['water','#ff7f0e','c_water']]){
@@ -158,10 +305,147 @@ function popupHTML(id,p){
   if(id==='water-pt'){let h=`<b>水位流量観測所</b><br>${p.name||''}`; if(p.river_system)h+=`<br>${p.river_system}${p.river?' '+p.river:''}`; return h;}
   if(id==='rain-pt') return `<b>雨量観測所</b><br>${p.name||''}`;
   if(id==='river-l'){let h='河川:'+(p.river||p.name||'(名称なし)'); if(p.area_km2!=null)h+=`<br>集水面積:${p.area_km2} km²`; if(p.waterway)h+=`<br>種別:${p.waterway}`; else if(p.order!=null)h+=`<br>河道次数:${p.order}`; return h;}
-  if(id==='bg-f') return `${p.name||''}<br>集水面積:${p.area_km2}km²<br>雨量計(水文水質DB):${p.n_rain_in}／AMeDAS:${p.n_amedas_in}`;
-  if(id==='bd-f') return `${p.name||''}<br>集水面積:${p.area_km2}km²`;
+  if(id==='bg-f'){
+    const badge=p.is_final===true
+      ?'<span style="display:inline-block;background:#0a7d2f;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">最終候補（使える集合118）</span>'
+      :'<span style="display:inline-block;background:#888;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">最終候補外</span>';
+    return `${p.name||''}<br>集水面積:${p.area_km2}km² / 雨量計:${p.n_rain_in}<br>${badge}${tsButton(p)}`;
+  }
+  if(id==='bd-f'){
+    const badge=p.is_final===true
+      ?'<span style="display:inline-block;background:#0a7d2f;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">最終候補（使える集合63）</span>'
+      :'<span style="display:inline-block;background:#888;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px">最終候補外</span>';
+    return `${p.name||''}<br>集水面積:${p.area_km2}km²<br>${badge}${tsButton(p)}`;
+  }
   return '';
 }
+// ===== 時系列パネル（流域クリック→雨量・観測流量の日集計チャート） =====
+// データは v_timeseries_daily.json.gz（scripts/build_collection_map_ts.py が生成。
+// 使える集合の流域ごとに、集水域内の雨量計・AMeDAS の日積算と、出口＋内包流量局・
+// ダム流入量の日平均を収録）。初回クリック時に一度だけ fetch する。
+function tsButton(p){
+  if(!p||p.id==null)return '';
+  return `<br><button class="tsbtn" data-bid="${p.id}" data-nm="${encodeURIComponent(p.name||'')}">雨量・流量の時系列</button>`;
+}
+const TS_FILE='v_timeseries_daily.json.gz';
+let _tsPromise=null,_tsCharts=[];
+function loadTS(){
+  if(!_tsPromise){
+    _tsPromise=fetch(TS_FILE).then(async r=>{
+      if(!r.ok)throw new Error(TS_FILE+' '+r.status);
+      const u8=new Uint8Array(await r.arrayBuffer());
+      let txt;
+      if(u8[0]===0x1f&&u8[1]===0x8b){  // gzip マジック（ホストが自動展開した場合は素の JSON が来る）
+        txt=await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+      }else{txt=new TextDecoder().decode(u8);}
+      return JSON.parse(txt);
+    }).catch(err=>{showStatus('時系列データ取得失敗: '+err.message);_tsPromise=null;return null;});
+  }
+  return _tsPromise;
+}
+const TS_PAL=['#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2','#7f7f7f',
+  '#bcbd22','#17becf','#aec7e8','#ffbb78','#98df8a','#ff9896','#c5b0d5','#c49c94'];
+const tsFmtDate=(u,v)=>v==null?'-':new Date(v*1000).toISOString().slice(0,10);
+function tsDestroy(){_tsCharts.forEach(u=>u.destroy());_tsCharts=[];}
+function tsRange(ts,keys){
+  let a=Infinity,b=-Infinity;
+  for(const k of keys){const s=ts.ser[k];if(!s)continue;a=Math.min(a,s.s);b=Math.max(b,s.s+s.v.length-1);}
+  return [a,b];
+}
+function tsAligned(ts,key,d0,n){
+  const s=ts.ser[key],out=new Array(n).fill(null),off=s.s-d0;
+  for(let i=0;i<s.v.length;i++){const j=off+i;if(j>=0&&j<n)out[j]=s.v[i];}
+  return out;
+}
+function tsName(ts,key){const m=ts.st[key];return m?m.nm.replace(/（.*?）/g,''):key.slice(2);}
+function tsBuild(ts,rainKeys,flowKeys){
+  tsDestroy();
+  const ctrl=document.getElementById('tsctrl'),box=document.getElementById('tscharts');
+  ctrl.innerHTML='';box.innerHTML='';
+  const keys=rainKeys.concat(flowKeys);
+  const [d0,d1]=tsRange(ts,keys);
+  if(!isFinite(d0)){box.textContent='収集済み時系列がありません';return;}
+  const n=d1-d0+1,xs=new Float64Array(n);
+  for(let i=0;i<n;i++)xs[i]=(d0+i)*86400;
+  const W=Math.max(480,Math.min(window.innerWidth-90,960));
+  let lock=false;
+  const syncX=(u,k)=>{if(k!=='x'||lock)return;lock=true;
+    _tsCharts.forEach(o=>{if(o!==u)o.setScale('x',{min:u.scales.x.min,max:u.scales.x.max});});lock=false;};
+  const baseOpts=h=>({width:W,height:h,padding:[8,8,0,0],
+    cursor:{drag:{x:true,y:false}},hooks:{setScale:[syncX]},scales:{x:{time:true}},axes:[{},{size:52}]});
+  let logOn=false;
+  const build=()=>{
+    tsDestroy();box.innerHTML='';
+    if(rainKeys.length){
+      box.insertAdjacentHTML('beforeend','<div class="tsaxlab">雨量 [mm/日]（日積算）</div>');
+      const div=document.createElement('div');box.appendChild(div);
+      const o=baseOpts(110);
+      o.series=[{value:tsFmtDate}].concat(rainKeys.map((k,i)=>({label:tsName(ts,k),
+        stroke:TS_PAL[i%TS_PAL.length],width:1,paths:uPlot.paths.bars({size:[1,1]}),
+        fill:TS_PAL[i%TS_PAL.length]+'55',points:{show:false}})));
+      _tsCharts.push(new uPlot(o,[xs].concat(rainKeys.map(k=>tsAligned(ts,k,d0,n))),div));
+    }
+    if(flowKeys.length){
+      box.insertAdjacentHTML('beforeend','<div class="tsaxlab">流量 [m³/s]（日平均）'+
+        (flowKeys.some(k=>k[0]==='d')?'・ダム流入量':'')+'</div>');
+      const div=document.createElement('div');box.appendChild(div);
+      const o=baseOpts(190);
+      o.scales.y=logOn?{distr:3}:{};
+      o.series=[{value:tsFmtDate}].concat(flowKeys.map((k,i)=>({
+        label:tsName(ts,k)+(k[0]==='d'?'（流入）':''),
+        stroke:k[0]==='d'?'#b2182b':TS_PAL[(i+3)%TS_PAL.length],width:1.2,points:{show:false}})));
+      const vals=flowKeys.map(k=>{const v=tsAligned(ts,k,d0,n);
+        return logOn?v.map(x=>(x!=null&&x>0)?x:null):v;});
+      _tsCharts.push(new uPlot(o,[xs].concat(vals),div));
+    }
+  };
+  const btn=(t,fn)=>{const b=document.createElement('button');b.textContent=t;b.onclick=fn;ctrl.appendChild(b);};
+  const setX=(mn,mx)=>{lock=false;_tsCharts.forEach(u=>u.setScale('x',{min:mn,max:mx}));};
+  btn('全期間',()=>setX(d0*86400,d1*86400));
+  btn('2015–2024',()=>setX(Date.UTC(2015,0,1)/1000,Date.UTC(2024,11,31)/1000));
+  btn('直近3年',()=>setX((d1-3*365)*86400,d1*86400));
+  if(flowKeys.length){
+    const lb=document.createElement('label');
+    lb.innerHTML='<input type="checkbox"> 流量 log';
+    lb.querySelector('input').onchange=e=>{logOn=e.target.checked;build();};
+    ctrl.appendChild(lb);
+  }
+  ctrl.insertAdjacentHTML('beforeend','<span style="color:#777">ドラッグで拡大・ダブルクリックで解除・凡例クリックで系列切替</span>');
+  build();
+}
+function openTimeseries(bid,nm){
+  const panel=document.getElementById('tspanel');
+  panel.style.display='block';
+  document.getElementById('tstitle').textContent=nm||bid;
+  document.getElementById('tssub').textContent='';
+  document.getElementById('tsctrl').innerHTML='';
+  document.getElementById('tscharts').textContent='時系列データを読込中…';
+  loadTS().then(ts=>{
+    if(!ts){document.getElementById('tscharts').textContent='時系列データを取得できませんでした（v_timeseries_daily.json.gz 未配置の可能性）';return;}
+    let b=ts.basins[bid],outerNote='';
+    if(!b){
+      // 束ね流域の内側 ID（内包する流量局・入れ子ダム）なら、それを含む外側の束ね流域を表示
+      for(const [obid,ob] of Object.entries(ts.basins)){
+        if((ob.q&&ob.q.includes(bid))||(ob.d&&ob.d.includes(bid))){
+          b=ob;outerNote=`内包する束ね流域「${ob.nm}」を表示・`;
+          document.getElementById('tstitle').textContent=ob.nm;break;
+        }
+      }
+    }
+    if(!b){document.getElementById('tscharts').textContent='この流域の時系列は未収録（最終候補=使える集合のみ収録）';return;}
+    document.getElementById('tssub').textContent=outerNote+
+      `集水面積 ${b.ar} km²・雨量 ${b.r.length}局＋AMeDAS ${b.a.length}地点・流量系列 ${b.q.length+b.d.length}本（日集計: 雨量=日積算・流量=日平均）`;
+    tsBuild(ts,b.r.map(i=>'r:'+i).concat(b.a.map(i=>'a:'+i)),
+            b.d.map(i=>'d:'+i).concat(b.q.map(i=>'q:'+i)));
+  });
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('.tsbtn');
+  if(t)openTimeseries(t.dataset.bid,decodeURIComponent(t.dataset.nm||''));
+});
+document.getElementById('tsclose').addEventListener('click',()=>{
+  tsDestroy();document.getElementById('tspanel').style.display='none';});
+
 map.on('click',e=>{
   const b=[[e.point.x-5,e.point.y-5],[e.point.x+5,e.point.y+5]];  // ±5px の許容
   for(const cid in CLUSTERS){ if(!map.getLayer(cid))continue;
@@ -207,6 +491,11 @@ for(const id in groups)document.getElementById(id).addEventListener('change',e=>
   const v=e.target.checked?'visible':'none';
   groups[id].forEach(l=>{if(map.getLayer(l))map.setLayoutProperty(l,'visibility',v);});
 });
+// 「最終候補のみ表示」＝ basins の filter を is_final=true に絞る／解除する
+document.getElementById('c_only_final').addEventListener('change',e=>{
+  const f=e.target.checked?['==',['get','is_final'],true]:null;
+  ['bg-f','bd-f'].forEach(l=>{if(map.getLayer(l))map.setFilter(l,f);});
+});
 // 背景地図切替。diff:false でフルリロードを強制し style.load を必ず発火させる
 // （diff既定だとオーバーレイ層が差分で消えても style.load が出ず buildAll が再実行されない）。
 for(const r of document.querySelectorAll('input[name=bm]'))
@@ -221,7 +510,7 @@ if(PUBLIC){
   const dl=document.getElementById('c_dam');  // 公開版は mudam(ダム諸量DB)
   if(dl&&dl.parentElement)dl.parentElement.lastChild.textContent='ダム（ダム諸量データベース・台形/色=管理者）';
   const note=document.getElementById('note');
-  if(note)note.innerHTML='出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), ダム=ダム諸量データベース（国土交通省 国土技術政策総合研究所, 政府標準利用規約2.0）, 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0)';
+  if(note)note.innerHTML='出典: 背景地図=© Geolonia Maps／地理院タイル（国土地理院）／© OpenStreetMap contributors, 観測所=国土交通省 水文水質データベース(https://www1.river.go.jp/, PDL1.0), 河川=© OpenStreetMap contributors (ODbL), ダム=ダム諸量データベース（国土交通省 国土技術政策総合研究所, 政府標準利用規約2.0）, 流域算出=J-FlwDir (Yamazaki et al., CC BY 4.0), 時系列=水文水質データベース・AMeDAS（気象庁, 政府標準利用規約2.0）';
 }
 </script>
 </body>
